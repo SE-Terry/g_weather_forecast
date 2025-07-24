@@ -4,6 +4,7 @@ import 'package:geolocator/geolocator.dart';
 import '../../providers/weather_provider.dart';
 import '../../services/weather_api_service.dart';
 import 'dart:async';
+import '../../services/email_service.dart';
 
 class SearchSection extends StatefulWidget {
   const SearchSection({super.key});
@@ -265,13 +266,275 @@ class _SearchSectionState extends State<SearchSection> {
   }
 
   void _showEmailRegistrationForm() {
-    // TODO: Create detailed email registration form
-    // This would include email, password, preferred city selection
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Email registration form coming soon!'),
-        backgroundColor: Colors.blue,
-      ),
+    final TextEditingController emailController = TextEditingController();
+    final GlobalKey<FormState> formKey = GlobalKey<FormState>();
+    bool isRegistering = false;
+    bool isUnsubscribing = false;
+    bool isSubmitted = false;
+    String? confirmationMessage;
+    final EmailService emailService = EmailService();
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            Future<String> _getUserLocation() async {
+              try {
+                // Check if user has searched for a city
+                final weatherProvider = Provider.of<WeatherProvider>(
+                  context,
+                  listen: false,
+                );
+                if (weatherProvider.currentWeather != null) {
+                  final locationData =
+                      weatherProvider.currentWeather!['location'];
+                  if (locationData != null) {
+                    final name = locationData['name'] ?? '';
+                    final region = locationData['region'] ?? '';
+                    final country = locationData['country'] ?? '';
+
+                    String location = name;
+                    if (region.isNotEmpty && region != name) {
+                      location += ', $region';
+                    }
+                    if (country.isNotEmpty) {
+                      location += ', $country';
+                    }
+                    return location.isNotEmpty ? location : 'your location';
+                  }
+                }
+
+                // Try to get current location
+                bool serviceEnabled =
+                    await Geolocator.isLocationServiceEnabled();
+                if (!serviceEnabled) {
+                  return 'your location';
+                }
+
+                LocationPermission permission =
+                    await Geolocator.checkPermission();
+                if (permission == LocationPermission.denied) {
+                  permission = await Geolocator.requestPermission();
+                  if (permission == LocationPermission.denied) {
+                    return 'your location';
+                  }
+                }
+
+                if (permission == LocationPermission.deniedForever) {
+                  return 'your location';
+                }
+
+                Position position = await Geolocator.getCurrentPosition(
+                  desiredAccuracy: LocationAccuracy.high,
+                );
+
+                // Get location name from coordinates using weather API
+                try {
+                  final weatherData = await _apiService.getCurrentWeather(
+                    '${position.latitude},${position.longitude}',
+                  );
+                  if (weatherData != null) {
+                    final locationData = weatherData['location'];
+                    if (locationData != null) {
+                      final name = locationData['name'] ?? '';
+                      final region = locationData['region'] ?? '';
+                      final country = locationData['country'] ?? '';
+
+                      String location = name;
+                      if (region.isNotEmpty && region != name) {
+                        location += ', $region';
+                      }
+                      if (country.isNotEmpty) {
+                        location += ', $country';
+                      }
+                      return location.isNotEmpty ? location : 'your location';
+                    }
+                  }
+                } catch (e) {
+                  // If weather API fails, return coordinates as fallback
+                  return '${position.latitude.toStringAsFixed(2)}, ${position.longitude.toStringAsFixed(2)}';
+                }
+
+                return 'your location';
+              } catch (e) {
+                return 'your location';
+              }
+            }
+
+            Future<void> handleRegister() async {
+              if (!formKey.currentState!.validate()) return;
+              setState(() => isRegistering = true);
+              try {
+                final location = await _getUserLocation();
+                await emailService.registerForWeatherEmail(
+                  emailController.text,
+                  location: location,
+                );
+                setState(() {
+                  isRegistering = false;
+                  isSubmitted = true;
+                  confirmationMessage =
+                      'A confirmation email has been sent to ${emailController.text}. Please check your inbox to confirm your subscription for $location.';
+                });
+              } catch (e) {
+                setState(() {
+                  isRegistering = false;
+                  isSubmitted = true;
+                  confirmationMessage = 'Failed to register: ${e.toString()}';
+                });
+              }
+            }
+
+            Future<void> handleUnsubscribe() async {
+              if (!formKey.currentState!.validate()) return;
+              setState(() => isUnsubscribing = true);
+              try {
+                await emailService.unsubscribeFromWeatherEmail(
+                  emailController.text,
+                );
+                setState(() {
+                  isUnsubscribing = false;
+                  isSubmitted = true;
+                  confirmationMessage =
+                      'A confirmation email to unsubscribe has been sent to ${emailController.text}. Please check your inbox to confirm.';
+                });
+              } catch (e) {
+                setState(() {
+                  isUnsubscribing = false;
+                  isSubmitted = true;
+                  confirmationMessage =
+                      'Failed to unsubscribe: ${e.toString()}';
+                });
+              }
+            }
+
+            return AlertDialog(
+              title: const Text('Daily Weather Email'),
+              content:
+                  isSubmitted
+                      ? Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.email_outlined,
+                            color: Colors.blue,
+                            size: 48,
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            confirmationMessage ?? '',
+                            style: const TextStyle(fontSize: 16),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      )
+                      : Form(
+                        key: formKey,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            TextFormField(
+                              controller: emailController,
+                              keyboardType: TextInputType.emailAddress,
+                              decoration: const InputDecoration(
+                                labelText: 'Email Address',
+                                border: OutlineInputBorder(),
+                              ),
+                              validator: (value) {
+                                if (value == null || value.isEmpty) {
+                                  return 'Please enter your email address';
+                                }
+                                final emailRegex = RegExp(
+                                  r'^[\w-]+(\.[\w-]+)*@([\w-]+\.)+[\w-]{2,4}$',
+                                );
+                                if (!emailRegex.hasMatch(value)) {
+                                  return 'Please enter a valid email address';
+                                }
+                                return null;
+                              },
+                            ),
+                            const SizedBox(height: 20),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: ElevatedButton(
+                                    onPressed:
+                                        isRegistering
+                                            ? null
+                                            : () => handleRegister(),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: const Color(0xFF6286E6),
+                                    ),
+                                    child:
+                                        isRegistering
+                                            ? const SizedBox(
+                                              width: 18,
+                                              height: 18,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                valueColor:
+                                                    AlwaysStoppedAnimation<
+                                                      Color
+                                                    >(Colors.white),
+                                              ),
+                                            )
+                                            : const Text('Register'),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: OutlinedButton(
+                                    onPressed:
+                                        isUnsubscribing
+                                            ? null
+                                            : () => handleUnsubscribe(),
+                                    style: OutlinedButton.styleFrom(
+                                      side: const BorderSide(color: Colors.red),
+                                    ),
+                                    child:
+                                        isUnsubscribing
+                                            ? const SizedBox(
+                                              width: 18,
+                                              height: 18,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                valueColor:
+                                                    AlwaysStoppedAnimation<
+                                                      Color
+                                                    >(Colors.red),
+                                              ),
+                                            )
+                                            : const Text(
+                                              'Unsubscribe',
+                                              style: TextStyle(
+                                                color: Colors.red,
+                                              ),
+                                            ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+              actions: [
+                if (!isSubmitted)
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                if (isSubmitted)
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Close'),
+                  ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 

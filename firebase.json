@@ -1,1 +1,47 @@
-{"flutter":{"platforms":{"android":{"default":{"projectId":"g-weather-forecast-2025","appId":"1:244614467814:android:4144612599ab581718ab27","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"g-weather-forecast-2025","configurations":{"android":"1:244614467814:android:4144612599ab581718ab27","web":"1:244614467814:web:168316db42a00f4b18ab27"}}}}}}
+{
+	"flutter": {
+		"platforms": {
+			"android": {
+				"default": {
+					"projectId": "g-weather-forecast-2025",
+					"appId": "1:244614467814:android:4144612599ab581718ab27",
+					"fileOutput": "android/app/google-services.json"
+				}
+			},
+			"dart": {
+				"lib/firebase_options.dart": {
+					"projectId": "g-weather-forecast-2025",
+					"configurations": {
+						"android": "1:244614467814:android:4144612599ab581718ab27",
+						"web": "1:244614467814:web:168316db42a00f4b18ab27"
+					}
+				}
+			}
+		}
+	},
+	"functions": [
+		{
+			"source": "functions",
+			"codebase": "default",
+			"ignore": [
+				"node_modules",
+				".git",
+				"firebase-debug.log",
+				"firebase-debug.*.log",
+				"*.local"
+			],
+			"predeploy": ["npm --prefix \"$RESOURCE_DIR\" run build"]
+		}
+	],
+	"extensions": {},
+	"hosting": {
+		"public": "build/web",
+		"ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+		"rewrites": [
+			{
+				"source": "**",
+				"destination": "/index.html"
+			}
+		]
+	}
+}

@@ -9,6 +9,9 @@ import 'sections/forecast-section/forecast_section.dart';
 import 'widgets/main_weather_card.dart';
 import 'sections/details-dialog/details_dialog.dart';
 import 'package:intl/intl.dart';
+import 'firebase_options.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,6 +24,7 @@ Future<void> main() async {
   } catch (e) {
     debugPrint('Error loading .env file: $e');
   }
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   runApp(const WeatherApp());
 }
 

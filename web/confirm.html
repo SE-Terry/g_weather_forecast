@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<title>Confirm Subscription</title>
+		<style>
+			body {
+				font-family: Arial, sans-serif;
+				text-align: center;
+				padding: 50px;
+			}
+		</style>
+	</head>
+	<body>
+		<h2>Confirming your subscription...</h2>
+		<div id="result"></div>
+		<script>
+			const params = new URLSearchParams(window.location.search)
+			const email = params.get('email')
+			if (!email) {
+				document.getElementById('result').innerHTML =
+					'<span style="color:red;">Invalid confirmation link.</span>'
+			} else {
+				fetch(
+					'https://us-central1-g-weather-forecast-2025.cloudfunctions.net/confirmSubscription?email=' +
+						encodeURIComponent(email)
+				)
+					.then((res) => res.text())
+					.then((html) => {
+						document.body.innerHTML = html
+					})
+					.catch(() => {
+						document.getElementById('result').innerHTML =
+							'<span style="color:red;">Error confirming subscription.</span>'
+					})
+			}
+		</script>
+	</body>
+</html>
