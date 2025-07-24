@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "244614467814",
+    "project_id": "g-weather-forecast-2025",
+    "storage_bucket": "g-weather-forecast-2025.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:244614467814:android:4144612599ab581718ab27",
+        "android_client_info": {
+          "package_name": "com.goldenowlinternship.g_weather_forecast"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDKtMIi5uH1CGMvC9GHeLVF8nWh-5Sm4kE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
