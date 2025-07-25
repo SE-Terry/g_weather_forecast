@@ -7,50 +7,50 @@
  */
 export interface EmailTemplateData {
  email: string
-	confirmLink?: string
-	companyName?: string
-	firstName?: string
-	location?: string
-	supportEmail?: string
-	companyAddress?: string
+ confirmLink?: string
+ companyName?: string
+ firstName?: string
+ location?: string
+ supportEmail?: string
+ companyAddress?: string
 }
 
 /**
  * Data for daily weather email.
  */
 export interface DailyWeatherData {
-	email: string
-	location: string
-	companyName?: string
-	firstName?: string
-	supportEmail?: string
-	companyAddress?: string
-	weatherData: {
-		current: {
-			temp_c: number
-			condition: {
-				text: string
-				icon: string
-			}
-			humidity: number
-			wind_kph: number
-			feelslike_c: number
-		}
-		forecast: {
-			forecastday: Array<{
-				date: string
-				day: {
-					maxtemp_c: number
-					mintemp_c: number
-					condition: {
-						text: string
-						icon: string
-					}
-					chance_of_rain: number
-				}
-			}>
-		}
-	}
+ email: string
+ location: string
+ companyName?: string
+ firstName?: string
+ supportEmail?: string
+ companyAddress?: string
+ weatherData: {
+  current: {
+   temp_c: number
+   condition: {
+    text: string
+    icon: string
+   }
+   humidity: number
+   wind_kph: number
+   feelslike_c: number
+  }
+  forecast: {
+   forecastday: Array<{
+    date: string
+    day: {
+     maxtemp_c: number
+     mintemp_c: number
+     condition: {
+      text: string
+      icon: string
+     }
+     chance_of_rain: number
+    }
+   }>
+  }
+ }
 }
 
 /**
@@ -64,7 +64,7 @@ export function generateSubscriptionConfirmationEmail(
   const {
     email,
     confirmLink = "https://g-weather-forecast-2025.web.app/confirm.html?email=" +
-			encodeURIComponent(email),
+   encodeURIComponent(email),
     companyName = "G-Weather-Forecast",
     firstName = "Weather Enthusiast",
     location = "your location",
@@ -495,9 +495,9 @@ export function generateDailyWeatherEmail(data: DailyWeatherData): string {
     .map((day, index) => {
       const date = new Date(day.date);
       const dayName =
-							index === 0 ?
-							  "Today" :
-							  date.toLocaleDateString("en-US", {weekday: "short"});
+       index === 0 ?
+         "Today" :
+         date.toLocaleDateString("en-US", {weekday: "short"});
       const monthDay = date.toLocaleDateString("en-US", {
         month: "short",
         day: "numeric",
@@ -551,7 +551,6 @@ export function generateUnsubscribeConfirmationEmail(
     companyName = "G-Weather-Forecast",
     location = "your location",
     supportEmail = "se.terry.2004.career@gmail.com",
-    companyAddress = "Ho Chi Minh City, Vietnam",
   } = data;
 
   return `
@@ -694,16 +693,6 @@ export function generateUnsubscribeConfirmationEmail(
       <p style="font-size: 14px; color: #7f8c8d;">
         Questions? Contact us at <a href="mailto:${supportEmail}" style="color: #4a90e2;">${supportEmail}</a>
       </p>
-    </div>
-    <div class="footer">
-      <div class="social-links">
-        <a href="#" title="Facebook">📘</a>
-        <a href="#" title="Twitter">🐦</a>
-        <a href="#" title="Instagram">📷</a>
-      </div>
-      <p><strong>${companyName}</strong></p>
-      <p>Your trusted weather companion</p>
-      <p>${companyAddress}</p>
     </div>
   </div>
 </body>

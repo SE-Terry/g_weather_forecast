@@ -1,3 +1,4 @@
+import "dotenv/config";
 /* eslint-disable max-len */
 /**
  * Import function triggers from their respective submodules:
@@ -13,7 +14,6 @@ import {onSchedule} from "firebase-functions/v2/scheduler";
 import * as admin from "firebase-admin";
 import * as logger from "firebase-functions/logger";
 import * as nodemailer from "nodemailer";
-import * as functions from "firebase-functions";
 import * as https from "https";
 import {
   generateSubscriptionConfirmationEmail,
@@ -23,59 +23,87 @@ import {
 
 admin.initializeApp();
 
-// Configure Gmail SMTP transporter using secure config
+// Configure Gmail SMTP transporter using environment variables
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
-    user: functions.config().gmail.user,
-    pass: functions.config().gmail.password,
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_PASSWORD,
   },
 });
 
 export const registerWeatherEmail = onCall(async (request) => {
-  const email = request.data.email;
-  const location = request.data.location || "your location";
-
-  // Store subscription in Firestore with location
-  await admin.firestore().collection("weather_subscriptions").doc(email).set({
-    email,
-    location,
-    confirmed: false,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
-  });
-
-  // Generate confirmation link
-  const confirmLink =
-		"https://g-weather-forecast-2025.web.app/confirm.html?email=" +
-		encodeURIComponent(email);
-
-  // Generate beautiful HTML email with user's location
-  const htmlContent = generateSubscriptionConfirmationEmail({
-    email,
-    confirmLink,
-    companyName: "G-Weather-Forecast",
-    firstName: "Weather Enthusiast",
-    location: location,
-    supportEmail: "se.terry.2004.career@gmail.com",
-    companyAddress: "Ho Chi Minh City, Vietnam",
-  });
-
-  const mailOptions = {
-    from: functions.config().gmail.user,
-    to: email,
-    subject: `Daily weather updates for ${location}`,
-    html: htmlContent,
-  };
-
   try {
+    // Validate request data
+    if (!request.data || !request.data.email) {
+      logger.error("Missing email in request data", request.data);
+      throw new Error("Email is required");
+    }
+
+    const email = request.data.email;
+    const location = request.data.location || "your location";
+
+    // Validate email is not empty string and has valid format
+    if (!email || typeof email !== 'string' || email.trim() === '') {
+      logger.error(`Email is empty or not a string: ${JSON.stringify(email)}`);
+      throw new Error("Valid email is required");
+    }
+
+    const trimmedEmail = email.trim();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(trimmedEmail)) {
+      logger.error(`Invalid email format: ${trimmedEmail}`);
+      throw new Error("Invalid email format");
+    }
+
+    // Check Gmail credentials
+    const gmailUser = process.env.GMAIL_USER;
+    const gmailPass = process.env.GMAIL_PASSWORD;
+    
+    if (!gmailUser || !gmailPass) {
+      logger.error("Gmail credentials not configured");
+      throw new Error("Email service not configured");
+    }
+
+    // Store subscription in Firestore with location
+    await admin.firestore().collection("weather_subscriptions").doc(trimmedEmail).set({
+      email: trimmedEmail,
+      location,
+      confirmed: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    // Generate confirmation link
+    const confirmLink =
+      "https://g-weather-forecast-2025.web.app/confirm.html?email=" +
+      encodeURIComponent(trimmedEmail);
+
+    // Generate beautiful HTML email with user's location
+    const htmlContent = generateSubscriptionConfirmationEmail({
+      email: trimmedEmail,
+      confirmLink,
+      companyName: "G-Weather-Forecast",
+      firstName: "Weather Enthusiast",
+      location: location,
+      supportEmail: "se.terry.2004.career@gmail.com",
+      companyAddress: "Ho Chi Minh City, Vietnam",
+    });
+
+    const mailOptions = {
+      from: gmailUser,
+      to: trimmedEmail,
+      subject: `Daily weather updates for ${location}`,
+      html: htmlContent,
+    };
+
     await transporter.sendMail(mailOptions);
     logger.info(
-      `Confirmation email sent to: ${email} for location: ${location}`
+      `Confirmation email sent to: ${trimmedEmail} for location: ${location}`
     );
-    return {message: `Confirmation email sent to ${email} for ${location}`};
+    return { message: `Confirmation email sent to ${trimmedEmail} for ${location}` };
   } catch (error) {
-    logger.error("Error sending email:", error);
-    throw new Error("Failed to send confirmation email");
+    logger.error("Error in registerWeatherEmail:", error);
+    throw new Error("Failed to process registration request");
   }
 });
 
@@ -110,7 +138,7 @@ export const unsubscribeWeatherEmail = onCall(async (request) => {
   });
 
   const mailOptions = {
-    from: functions.config().gmail.user,
+    from: process.env.GMAIL_USER,
     to: email,
     subject: "Unsubscribed from daily weather",
     html: htmlContent,
@@ -130,6 +158,16 @@ export const unsubscribeWeatherEmail = onCall(async (request) => {
 
 // Handle email confirmation when users click the confirmation link
 export const confirmSubscription = onRequest(async (req, res) => {
+  // Set CORS headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  
+  if (req.method === 'OPTIONS') {
+    res.status(204).send('');
+    return;
+  }
+
   const email = req.query.email as string;
 
   if (!email) {
@@ -145,6 +183,41 @@ export const confirmSubscription = onRequest(async (req, res) => {
   }
 
   try {
+    // Check if subscription exists
+    const subscriptionDoc = await admin
+      .firestore()
+      .collection("weather_subscriptions")
+      .doc(email)
+      .get();
+
+    if (!subscriptionDoc.exists) {
+      res.status(404).send(`
+        <html>
+          <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
+            <h2>❌ Subscription Not Found</h2>
+            <p>No subscription found for this email address.</p>
+          </body>
+        </html>
+      `);
+      return;
+    }
+
+    const subscriptionData = subscriptionDoc.data();
+    if (subscriptionData?.confirmed) {
+      res.status(200).send(`
+        <html>
+          <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f4f7fa;">
+            <div style="max-width: 500px; margin: 0 auto; background: white; padding: 40px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+              <h2 style="color: #4a90e2;">✅ Already Confirmed!</h2>
+              <p>Your email subscription is already confirmed.</p>
+              <p>You are receiving daily weather updates for your location at <strong>${email}</strong> every morning at 6:00 AM.</p>
+            </div>
+          </body>
+        </html>
+      `);
+      return;
+    }
+
     // Update subscription to confirmed
     await admin
       .firestore()
@@ -185,11 +258,44 @@ export const confirmSubscription = onRequest(async (req, res) => {
   }
 });
 
-// Helper function to fetch weather data from WeatherAPI
-async function fetchWeatherData(location: string): Promise<any> {
+/**
+ * Type for the weather data returned by WeatherAPI.
+ */
+interface WeatherApiResponse {
+  current: {
+    temp_c: number;
+    condition: {
+      text: string;
+      icon: string;
+    };
+    humidity: number;
+    wind_kph: number;
+    feelslike_c: number;
+  };
+  forecast: {
+    forecastday: Array<{
+      date: string;
+      day: {
+        maxtemp_c: number;
+        mintemp_c: number;
+        condition: {
+          text: string;
+          icon: string;
+        };
+        chance_of_rain: number;
+      };
+    }>;
+  };
+}
+
+/**
+ * Fetches weather data from WeatherAPI for a given location.
+ * @param {string} location - The location to fetch weather for.
+ * @return {Promise<WeatherApiResponse>} The weather data as returned by the API.
+ */
+async function fetchWeatherData(location: string): Promise<WeatherApiResponse> {
   return new Promise((resolve, reject) => {
-    const apiKey =
-			functions.config().weather?.api_key || process.env.WEATHER_API_KEY;
+    const apiKey = process.env.WEATHER_API_KEY;
     const url = `https://api.weatherapi.com/v1/forecast.json?key=${apiKey}&q=${encodeURIComponent(
       location
     )}&days=5&aqi=no&alerts=no`;
@@ -197,10 +303,10 @@ async function fetchWeatherData(location: string): Promise<any> {
     https
       .get(url, (res) => {
         let data = "";
-        res.on("data", (chunk) => {
-          data += chunk;
+        (res as any).on("data", (chunk: Buffer) => {
+          data += chunk.toString();
         });
-        res.on("end", () => {
+        (res as any).on("end", () => {
           try {
             const weatherData = JSON.parse(data);
             if (weatherData.error) {
@@ -213,11 +319,16 @@ async function fetchWeatherData(location: string): Promise<any> {
           }
         });
       })
-      .on("error", (error) => {
+      .on("error", (error: Error) => {
         reject(error);
       });
   });
 }
+
+// Test function to manually trigger daily weather emails
+export const testSendDailyWeatherEmails = onCall(async () => {
+  return await sendDailyWeatherEmailsLogic();
+});
 
 // Scheduled function to send daily weather emails at 6 AM
 export const sendDailyWeatherEmails = onSchedule(
@@ -225,7 +336,13 @@ export const sendDailyWeatherEmails = onSchedule(
     schedule: "0 6 * * *", // Run at 6:00 AM every day
     timeZone: "Asia/Ho_Chi_Minh", // Vietnam timezone
   },
-  async (event) => {
+  async () => {
+    await sendDailyWeatherEmailsLogic();
+  }
+);
+
+// Shared logic for sending daily weather emails
+async function sendDailyWeatherEmailsLogic() {
     logger.info("Starting daily weather email job");
 
     try {
@@ -271,7 +388,7 @@ export const sendDailyWeatherEmails = onSchedule(
 
             // Send email
             const mailOptions = {
-              from: functions.config().gmail.user,
+              from: process.env.GMAIL_USER,
               to: email,
               subject: `🌤️ Daily Weather for ${location} - ${new Date().toLocaleDateString()}`,
               html: htmlContent,
@@ -300,9 +417,9 @@ export const sendDailyWeatherEmails = onSchedule(
       }
 
       logger.info("Daily weather email job completed");
+      return { success: true, message: "Daily weather emails sent successfully" };
     } catch (error) {
       logger.error("Error in daily weather email job:", error);
       throw error;
     }
-  }
-);
+}

@@ -46,8 +46,10 @@ app.*.map.json
 
 # Environment files
 .env
-web/.env
+/web/.env
 web/web.env
+web/.env
+/web/web.env
 
 # Firebase config files (using env vars instead)
 lib/firebase_options.dart
