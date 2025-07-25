@@ -5,6 +5,9 @@ import '../../providers/weather_provider.dart';
 import '../../services/weather_api_service.dart';
 import 'dart:async';
 import '../../services/email_service.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:html' as html show window;
+import 'dart:js' as js;
 
 class SearchSection extends StatefulWidget {
   const SearchSection({super.key});
@@ -142,58 +145,351 @@ class _SearchSectionState extends State<SearchSection> {
     });
 
     try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        throw Exception('Location services are disabled');
-      }
+      // For web, try a more direct approach first
+      if (kIsWeb) {
+        try {
+          final position = await _getLocationWeb();
+          if (position != null) {
+            if (!mounted) return;
+            final weatherProvider = Provider.of<WeatherProvider>(
+              context,
+              listen: false,
+            );
+            await weatherProvider.fetchWeather(
+              '${position['latitude']},${position['longitude']}',
+            );
 
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          throw Exception('Location permissions are denied');
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Weather updated for your current location'),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            }
+            return;
+          }
+        } catch (webError) {
+          // If web geolocation fails with a clear error, don't fall back
+          String errorStr = webError.toString().toLowerCase();
+          if (errorStr.contains('denied') || errorStr.contains('permission')) {
+            throw Exception(
+              'Location permission denied. Please allow location access in your browser and try again.',
+            );
+          }
+          // For other web errors, we can try fallback
+          print('Web geolocation failed: $webError');
         }
       }
 
-      if (permission == LocationPermission.deniedForever) {
-        throw Exception('Location permissions are permanently denied');
-      }
-
-      Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
-
-      if (!mounted) return;
-      final weatherProvider = Provider.of<WeatherProvider>(
-        context,
-        listen: false,
-      );
-      await weatherProvider.fetchWeather(
-        '${position.latitude},${position.longitude}',
-      );
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Weather updated for your current location'),
-            backgroundColor: Colors.green,
-          ),
+      // Fallback to original geolocator approach only for non-web or non-permission errors
+      if (!kIsWeb) {
+        await _getCurrentLocationGeolocator();
+      } else {
+        // For web, if JavaScript method failed for reasons other than permission, show error
+        throw Exception(
+          'Unable to access location. Please ensure location services are enabled and permissions are granted.',
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to get location: ${e.toString()}'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        _handleLocationError(e);
       }
     } finally {
       setState(() {
         _isGettingLocation = false;
       });
     }
+  }
+
+  Future<Map<String, double>?> _getLocationWeb() async {
+    if (!kIsWeb) return null;
+
+    try {
+      // Check if geolocation is available
+      if (html.window.navigator.geolocation == null) {
+        throw Exception('Geolocation not available');
+      }
+
+      final completer = Completer<Map<String, double>?>();
+
+      // Use JavaScript directly
+      try {
+        js.context.callMethod('eval', [
+          '''
+          if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+              function(position) {
+                window.flutterLocationSuccess = {
+                  latitude: position.coords.latitude,
+                  longitude: position.coords.longitude
+                };
+              },
+              function(error) {
+                console.log('Geolocation error:', error);
+                window.flutterLocationError = error.message || error.code || 'Location error';
+              },
+              {
+                enableHighAccuracy: true,
+                timeout: 15000,
+                maximumAge: 0
+              }
+            );
+          } else {
+            window.flutterLocationError = 'Geolocation not supported';
+          }
+        ''',
+        ]);
+      } catch (jsError) {
+        throw Exception('JavaScript execution error: $jsError');
+      }
+
+      // Wait for result
+      int attempts = 0;
+      while (attempts < 30) {
+        // 15 seconds timeout
+        await Future.delayed(const Duration(milliseconds: 500));
+        attempts++;
+
+        // Check for success
+        final success = js.context['flutterLocationSuccess'];
+        if (success != null) {
+          final result = {
+            'latitude': success['latitude'] as double,
+            'longitude': success['longitude'] as double,
+          };
+          // Clean up
+          js.context['flutterLocationSuccess'] = null;
+          js.context['flutterLocationError'] = null;
+          return result;
+        }
+
+        // Check for error
+        final error = js.context['flutterLocationError'];
+        if (error != null) {
+          final errorMsg = error.toString();
+          // Clean up
+          js.context['flutterLocationSuccess'] = null;
+          js.context['flutterLocationError'] = null;
+
+          // Handle specific error messages
+          if (errorMsg.contains('denied') || errorMsg.contains('User denied')) {
+            throw Exception(
+              'Location permission denied. Please allow location access in your browser settings and try again.',
+            );
+          } else if (errorMsg.contains('unavailable')) {
+            throw Exception(
+              'Location is currently unavailable. Please check your device settings and try again.',
+            );
+          } else if (errorMsg.contains('timeout')) {
+            throw Exception('Location request timed out. Please try again.');
+          } else {
+            throw Exception('Location error: $errorMsg');
+          }
+        }
+      }
+
+      throw Exception('Location request timed out');
+    } catch (e) {
+      print('Web geolocation error: $e');
+      return null;
+    }
+  }
+
+  Future<void> _getCurrentLocationGeolocator() async {
+    // Check if running on web and if HTTPS is required
+    if (kIsWeb && !_isSecureContext()) {
+      throw Exception(
+        'Geolocation requires HTTPS in production. Please access the app via HTTPS.',
+      );
+    }
+
+    // Add a small delay to ensure the web context is ready
+    if (kIsWeb) {
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
+
+    bool serviceEnabled;
+    try {
+      serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    } catch (e) {
+      if (kIsWeb) {
+        throw Exception(
+          'Unable to check location services. Please ensure you\'re using a supported browser with HTTPS.',
+        );
+      }
+      throw Exception(
+        'Location services are disabled. Please enable location services in your browser.',
+      );
+    }
+
+    if (!serviceEnabled) {
+      throw Exception(
+        'Location services are disabled. Please enable location services in your browser.',
+      );
+    }
+
+    LocationPermission permission;
+    try {
+      permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          throw Exception(
+            'Location permission denied. Please allow location access in your browser settings.',
+          );
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        throw Exception(
+          'Location permissions are permanently denied. Please reset permissions in your browser settings.',
+        );
+      }
+    } catch (e) {
+      if (kIsWeb) {
+        throw Exception(
+          'Unable to request location permission. Please check your browser settings and ensure HTTPS is enabled.',
+        );
+      }
+      rethrow;
+    }
+
+    Position position;
+    try {
+      position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 15),
+      );
+    } catch (e) {
+      if (kIsWeb) {
+        // Handle specific web geolocation errors
+        String errorStr = e.toString().toLowerCase();
+        if (errorStr.contains('timeout')) {
+          throw Exception('Location request timed out. Please try again.');
+        } else if (errorStr.contains('permission') ||
+            errorStr.contains('denied')) {
+          throw Exception(
+            'Location access denied. Please allow location access and try again.',
+          );
+        } else if (errorStr.contains('unavailable')) {
+          throw Exception(
+            'Location is currently unavailable. Please try again later.',
+          );
+        } else {
+          throw Exception(
+            'Unable to get your location. Please ensure location services are enabled and you\'re using HTTPS.',
+          );
+        }
+      }
+      rethrow;
+    }
+
+    if (!mounted) return;
+    final weatherProvider = Provider.of<WeatherProvider>(
+      context,
+      listen: false,
+    );
+    await weatherProvider.fetchWeather(
+      '${position.latitude},${position.longitude}',
+    );
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Weather updated for your current location'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
+  void _handleLocationError(dynamic e) {
+    String errorMessage = 'Failed to get location';
+
+    // More comprehensive error handling
+    try {
+      String errorString = e.toString();
+
+      // Handle different types of errors
+      if (errorString.contains('[object Object]')) {
+        errorMessage =
+            'Location access failed. Please ensure you\'re using HTTPS and have granted location permissions.';
+      } else if (errorString.contains('NotAllowedError') ||
+          errorString.contains('denied')) {
+        errorMessage =
+            'Location access denied. Please allow location access in your browser and try again.';
+      } else if (errorString.contains('HTTPS')) {
+        errorMessage =
+            'Location access requires HTTPS. Please access the app via a secure connection.';
+      } else if (errorString.contains('timeout') ||
+          errorString.contains('TimeoutException')) {
+        errorMessage = 'Location request timed out. Please try again.';
+      } else if (errorString.contains('PositionUnavailableError')) {
+        errorMessage =
+            'Location unavailable. Please check your device settings and try again.';
+      } else if (errorString.contains('LocationServiceDisabledException')) {
+        errorMessage =
+            'Location services are disabled. Please enable location services in your browser.';
+      } else if (errorString.contains('PermissionDeniedException')) {
+        errorMessage =
+            'Location permission denied. Please allow location access and try again.';
+      } else if (errorString.isNotEmpty &&
+          !errorString.contains('Exception:')) {
+        errorMessage = 'Location error: $errorString';
+      } else {
+        // For web-specific issues
+        if (kIsWeb) {
+          errorMessage =
+              'Unable to access location. Please ensure:\n• You\'re using HTTPS\n• Location permissions are granted\n• Location services are enabled';
+        } else {
+          errorMessage = 'Failed to get location: $errorString';
+        }
+      }
+    } catch (stringError) {
+      // If even string conversion fails
+      errorMessage =
+          'Location access failed. Please check your browser settings and ensure the app is accessed via HTTPS.';
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(errorMessage),
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 6),
+        action: SnackBarAction(
+          label: 'Help',
+          textColor: Colors.white,
+          onPressed: () {
+            _showLocationHelpDialog();
+          },
+        ),
+      ),
+    );
+  }
+
+  bool _isSecureContext() {
+    if (!kIsWeb) return true;
+
+    // In debug mode, localhost is considered secure
+    if (Uri.base.host == 'localhost' ||
+        Uri.base.host == '127.0.0.1' ||
+        Uri.base.host.contains('localhost')) {
+      return true;
+    }
+
+    // Check if the current context is HTTPS
+    bool isHttps = Uri.base.scheme == 'https';
+
+    // Debug logging for web context
+    if (kIsWeb) {
+      print('Debug - Current URL: ${Uri.base.toString()}');
+      print('Debug - Scheme: ${Uri.base.scheme}');
+      print('Debug - Host: ${Uri.base.host}');
+      print('Debug - Is HTTPS: $isHttps');
+    }
+
+    return isHttps;
   }
 
   void _showEmailSubscriptionDialog() {
@@ -306,59 +602,110 @@ class _SearchSectionState extends State<SearchSection> {
                   }
                 }
 
-                // Try to get current location
-                bool serviceEnabled =
-                    await Geolocator.isLocationServiceEnabled();
-                if (!serviceEnabled) {
-                  return 'your location';
-                }
+                // For web, try the JavaScript-based location method first
+                if (kIsWeb) {
+                  try {
+                    final position = await _getLocationWeb();
+                    if (position != null) {
+                      // Get location name from coordinates using weather API
+                      try {
+                        final weatherData = await _apiService.getCurrentWeather(
+                          '${position['latitude']},${position['longitude']}',
+                        );
+                        if (weatherData != null) {
+                          final locationData = weatherData['location'];
+                          if (locationData != null) {
+                            final name = locationData['name'] ?? '';
+                            final region = locationData['region'] ?? '';
+                            final country = locationData['country'] ?? '';
 
-                LocationPermission permission =
-                    await Geolocator.checkPermission();
-                if (permission == LocationPermission.denied) {
-                  permission = await Geolocator.requestPermission();
-                  if (permission == LocationPermission.denied) {
+                            String location = name;
+                            if (region.isNotEmpty && region != name) {
+                              location += ', $region';
+                            }
+                            if (country.isNotEmpty) {
+                              location += ', $country';
+                            }
+                            return location.isNotEmpty
+                                ? location
+                                : 'your location';
+                          }
+                        }
+                      } catch (e) {
+                        // If weather API fails, return coordinates as fallback
+                        return '${position['latitude']!.toStringAsFixed(2)}, ${position['longitude']!.toStringAsFixed(2)}';
+                      }
+                    }
+                  } catch (webError) {
+                    // If location permission is denied, return generic location
+                    print('Web geolocation failed for email: $webError');
                     return 'your location';
                   }
                 }
 
-                if (permission == LocationPermission.deniedForever) {
-                  return 'your location';
-                }
+                // Fallback to geolocator for non-web platforms
+                if (!kIsWeb) {
+                  // Check if running on web and if HTTPS is required
+                  if (kIsWeb && !_isSecureContext()) {
+                    return 'your location';
+                  }
 
-                Position position = await Geolocator.getCurrentPosition(
-                  desiredAccuracy: LocationAccuracy.high,
-                );
+                  // Try to get current location
+                  bool serviceEnabled =
+                      await Geolocator.isLocationServiceEnabled();
+                  if (!serviceEnabled) {
+                    return 'your location';
+                  }
 
-                // Get location name from coordinates using weather API
-                try {
-                  final weatherData = await _apiService.getCurrentWeather(
-                    '${position.latitude},${position.longitude}',
-                  );
-                  if (weatherData != null) {
-                    final locationData = weatherData['location'];
-                    if (locationData != null) {
-                      final name = locationData['name'] ?? '';
-                      final region = locationData['region'] ?? '';
-                      final country = locationData['country'] ?? '';
-
-                      String location = name;
-                      if (region.isNotEmpty && region != name) {
-                        location += ', $region';
-                      }
-                      if (country.isNotEmpty) {
-                        location += ', $country';
-                      }
-                      return location.isNotEmpty ? location : 'your location';
+                  LocationPermission permission =
+                      await Geolocator.checkPermission();
+                  if (permission == LocationPermission.denied) {
+                    permission = await Geolocator.requestPermission();
+                    if (permission == LocationPermission.denied) {
+                      return 'your location';
                     }
                   }
-                } catch (e) {
-                  // If weather API fails, return coordinates as fallback
-                  return '${position.latitude.toStringAsFixed(2)}, ${position.longitude.toStringAsFixed(2)}';
+
+                  if (permission == LocationPermission.deniedForever) {
+                    return 'your location';
+                  }
+
+                  Position position = await Geolocator.getCurrentPosition(
+                    desiredAccuracy: LocationAccuracy.high,
+                    timeLimit: const Duration(seconds: 10),
+                  );
+
+                  // Get location name from coordinates using weather API
+                  try {
+                    final weatherData = await _apiService.getCurrentWeather(
+                      '${position.latitude},${position.longitude}',
+                    );
+                    if (weatherData != null) {
+                      final locationData = weatherData['location'];
+                      if (locationData != null) {
+                        final name = locationData['name'] ?? '';
+                        final region = locationData['region'] ?? '';
+                        final country = locationData['country'] ?? '';
+
+                        String location = name;
+                        if (region.isNotEmpty && region != name) {
+                          location += ', $region';
+                        }
+                        if (country.isNotEmpty) {
+                          location += ', $country';
+                        }
+                        return location.isNotEmpty ? location : 'your location';
+                      }
+                    }
+                  } catch (e) {
+                    // If weather API fails, return coordinates as fallback
+                    return '${position.latitude.toStringAsFixed(2)}, ${position.longitude.toStringAsFixed(2)}';
+                  }
                 }
 
                 return 'your location';
               } catch (e) {
+                print('Error getting user location for email: $e');
                 return 'your location';
               }
             }
@@ -533,6 +880,46 @@ class _SearchSectionState extends State<SearchSection> {
               ],
             );
           },
+        );
+      },
+    );
+  }
+
+  void _showLocationHelpDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Location Access Help'),
+          content: const Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'To use location features, please ensure:',
+                style: TextStyle(fontWeight: FontWeight.w500),
+              ),
+              SizedBox(height: 12),
+              Text('• The app is accessed via HTTPS (not HTTP)'),
+              SizedBox(height: 4),
+              Text('• Location permissions are granted in your browser'),
+              SizedBox(height: 4),
+              Text('• Location services are enabled on your device'),
+              SizedBox(height: 4),
+              Text('• Your browser supports geolocation API'),
+              SizedBox(height: 12),
+              Text(
+                'If the issue persists, try refreshing the page or using a different browser.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('OK'),
+            ),
+          ],
         );
       },
     );

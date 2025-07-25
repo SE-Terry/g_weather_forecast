@@ -281,6 +281,7 @@ flutter doctor
 This project is a part of the internship program at Golden Owl Asia for the Mobile Flutter Developer position. Thank you for the opportunity and support—I'm truly grateful to be a part of this journey!
 
 I will update the demo video in this README in no time. Stay tuned!
+Youtube Walkthrough Demo: [YouTube](https://youtu.be/HM5h4f-z7Wg/)
 
 ## 📄 License
 

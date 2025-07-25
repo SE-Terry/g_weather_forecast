@@ -19,6 +19,10 @@
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta name="description" content="A new Flutter project.">
+  
+  <!-- Security and Permissions -->
+  <meta http-equiv="Permissions-Policy" content="geolocation=(self)">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
@@ -31,6 +35,22 @@
 
   <title>g_weather_forecast</title>
   <link rel="manifest" href="manifest.json">
+  
+  <script>
+    // Ensure geolocation is available before Flutter loads
+    if ('geolocation' in navigator) {
+      console.log('Geolocation API is available');
+    } else {
+      console.warn('Geolocation API is not available');
+    }
+    
+    // Check if we're in a secure context
+    if (window.isSecureContext) {
+      console.log('Running in secure context (HTTPS)');
+    } else {
+      console.warn('Not running in secure context - geolocation may not work');
+    }
+  </script>
 </head>
 <body>
   <script src="flutter_bootstrap.js" async></script>
